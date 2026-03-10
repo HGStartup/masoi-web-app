@@ -5,3 +5,9 @@ node_modules/
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# .NET
+backend/bin/
+backend/obj/
+backend/wwwroot/
+backend/App_Data/

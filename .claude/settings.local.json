@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "WebSearch",
+      "WebFetch(domain:www.svgrepo.com)",
+      "WebFetch(domain:playwerewolf.co)",
+      "WebFetch(domain:www.behance.net)",
+      "WebFetch(domain:help.wolfy.net)",
+      "WebFetch(domain:game-icons.net)",
+      "WebFetch(domain:www.pinterest.com)",
+      "WebFetch(domain:deploy.giatocnguyenhuu.vn)"
+    ]
+  }
+}

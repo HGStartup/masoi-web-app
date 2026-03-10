@@ -1,4 +1,5 @@
-# deploy.ps1 — Build & deploy masoi-app to IIS (WWolf site)
+# deploy.ps1 — Build & deploy masoi-web-app to IIS (WWolf site)
+# Architecture: React (Vite) frontend + ASP.NET Core 8 backend
 param(
     [string]$SiteName       = "WWolf",
     [string]$DeployUrl      = "https://deploy.giatocnguyenhuu.vn:12178/msdeploy.axd?site=WWolf",
@@ -10,7 +11,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDir    = $PSScriptRoot
-$appDir       = Join-Path $scriptDir "masoi-app"
+$frontendDir  = Join-Path $scriptDir "frontend"
+$backendDir   = Join-Path $scriptDir "backend"
+$wwwrootDir   = Join-Path $backendDir "wwwroot"
+$publishDir   = Join-Path $backendDir "bin\publish"
 $msdeployPath = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
 
 if (-not (Test-Path $msdeployPath)) {
@@ -18,33 +22,77 @@ if (-not (Test-Path $msdeployPath)) {
     exit 1
 }
 
-# ── Step 1: Build Next.js ──
+# ── Step 1: Build frontend (Vite) → backend/wwwroot ──
 if (-not $SkipBuild) {
-    Write-Host "`n[1/2] Building Next.js app..." -ForegroundColor Cyan
-    Push-Location $appDir
-    npm run build
+    Write-Host "`n[1/3] Building frontend (Vite)..." -ForegroundColor Cyan
+    Push-Location $frontendDir
+
+    if (-not (Test-Path "node_modules")) {
+        Write-Host "  Installing npm dependencies..." -ForegroundColor Yellow
+        npm ci
+        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "npm ci FAILED!" -ForegroundColor Red; exit 1 }
+    }
+
+    npx vite build --outDir $wwwrootDir --emptyOutDir
     if ($LASTEXITCODE -ne 0) {
         Pop-Location
-        Write-Host "Next.js build FAILED!" -ForegroundColor Red
+        Write-Host "Frontend build FAILED!" -ForegroundColor Red
         exit 1
     }
     Pop-Location
-    Write-Host "Next.js build OK" -ForegroundColor Green
+    Write-Host "Frontend build OK" -ForegroundColor Green
+
+    # ── Step 2: Publish backend (.NET) ──
+    Write-Host "`n[2/3] Publishing backend (.NET)..." -ForegroundColor Cyan
+    Push-Location $backendDir
+    dotnet publish -c Release -o $publishDir
+    if ($LASTEXITCODE -ne 0) {
+        Pop-Location
+        Write-Host "Backend publish FAILED!" -ForegroundColor Red
+        exit 1
+    }
+    Pop-Location
+    Write-Host "Backend publish OK" -ForegroundColor Green
 } else {
-    Write-Host "`n[1/2] Skipping build (--SkipBuild)" -ForegroundColor Yellow
+    Write-Host "`n[1/3] Skipping build (--SkipBuild)" -ForegroundColor Yellow
+    Write-Host "[2/3] Skipping publish (--SkipBuild)" -ForegroundColor Yellow
 }
 
-# ── Step 2: Deploy via MSDeploy ──
-Write-Host "`n[2/2] Deploying to $SiteName..." -ForegroundColor Cyan
+# ── Step 3: Deploy via MSDeploy ──
+Write-Host "`n[3/3] Deploying to $SiteName..." -ForegroundColor Cyan
 
 if ($WwwrootOnly) {
-    $sourceDir   = Join-Path $appDir "public"
-    $destContent = "$SiteName\public"
-    Write-Host "  (public only)" -ForegroundColor Yellow
+    $sourceDir   = Join-Path $publishDir "wwwroot"
+    $destContent = "$SiteName\wwwroot"
+    Write-Host "  (wwwroot only)" -ForegroundColor Yellow
 } else {
-    $sourceDir   = $appDir
+    $sourceDir   = $publishDir
     $destContent = $SiteName
 }
+
+# Ensure App_Data folder exists on server (for SQLite DB)
+$appDataLocal = Join-Path $publishDir "App_Data"
+if (-not (Test-Path $appDataLocal)) { New-Item -ItemType Directory -Path $appDataLocal | Out-Null }
+"placeholder" | Out-File (Join-Path $appDataLocal ".keep") -Encoding utf8
+Write-Host "  Creating App_Data on server..." -ForegroundColor Yellow
+& $msdeployPath `
+    "-verb:sync" `
+    "-source:contentPath=`"$appDataLocal`"" `
+    "-dest:contentPath=`"$destContent\App_Data`",computerName=`"$DeployUrl`",authType=Basic,userName=`"$DeployUser`",password=`"$DeployPassword`"" `
+    "-allowUntrusted"
+Remove-Item (Join-Path $appDataLocal ".keep") -Force -ErrorAction SilentlyContinue
+
+# Deploy app_offline.htm first to stop the app, then wait for IIS to release locks
+$offlineFile = Join-Path $sourceDir "app_offline.htm"
+"<html><body>Updating...</body></html>" | Out-File $offlineFile -Encoding utf8
+
+Write-Host "  Sending app_offline.htm to stop app..." -ForegroundColor Yellow
+& $msdeployPath `
+    "-verb:sync" `
+    "-source:contentPath=`"$offlineFile`"" `
+    "-dest:contentPath=`"$destContent\app_offline.htm`",computerName=`"$DeployUrl`",authType=Basic,userName=`"$DeployUser`",password=`"$DeployPassword`"" `
+    "-allowUntrusted"
+Start-Sleep -Seconds 3
 
 $msdeployArgs = @(
     "-verb:sync",
@@ -54,14 +102,27 @@ $msdeployArgs = @(
     "-skip:objectName=dirPath,absolutePath=.*\\node_modules$",
     "-skip:objectName=dirPath,absolutePath=.*\\.git$",
     "-skip:objectName=filePath,absolutePath=.*\.env\.local$",
-    "-enableRule:AppOffline"
+    "-skip:objectName=dirPath,absolutePath=.*\\App_Data$",
+    "-retryAttempts:5",
+    "-retryInterval:3000"
 )
 
 & $msdeployPath @msdeployArgs
+$deployExit = $LASTEXITCODE
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "`nDEPLOY THANH CONG!" -ForegroundColor Green
-} else {
-    Write-Host "`nDEPLOY THAT BAI! (exit code: $LASTEXITCODE)" -ForegroundColor Red
-    exit $LASTEXITCODE
+# Remove app_offline.htm from local publish dir
+Remove-Item $offlineFile -Force -ErrorAction SilentlyContinue
+
+if ($deployExit -ne 0) {
+    Write-Host "`nDEPLOY THAT BAI! (exit code: $deployExit)" -ForegroundColor Red
+    exit $deployExit
 }
+
+# Remove app_offline.htm from server to bring app back online
+Write-Host "Bringing app back online..." -ForegroundColor Cyan
+& $msdeployPath `
+    "-verb:delete" `
+    "-dest:contentPath=`"$destContent\app_offline.htm`",computerName=`"$DeployUrl`",authType=Basic,userName=`"$DeployUser`",password=`"$DeployPassword`"" `
+    "-allowUntrusted"
+
+Write-Host "`nDEPLOY THANH CONG!" -ForegroundColor Green
