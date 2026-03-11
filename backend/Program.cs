@@ -10,6 +10,7 @@ builder.Services.AddSignalR();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<GameEngine>();
 builder.Services.AddSingleton<RoomManager>();
+builder.Services.AddSingleton<VoteTimerService>();
 
 // SQLite — use App_Data folder (writable on IIS)
 var appDataDir = Path.Combine(builder.Environment.ContentRootPath, "App_Data");

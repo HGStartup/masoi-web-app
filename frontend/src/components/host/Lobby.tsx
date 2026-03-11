@@ -2,32 +2,73 @@ import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { getConnection } from '../../lib/signalr'
 import { useStore } from '../../lib/store'
-import { ALL_ROLES, ROLE_NAMES, type Player } from '../../types/game'
+import { CORE_ROLES, SPECIAL_ROLES, ROLE_NAMES, ROLE_DESCRIPTIONS, type Player } from '../../types/game'
 import RoleIcon from '../shared/RoleIcon'
 
 export default function Lobby() {
   const { roomCode, players, config } = useStore()
+  const [guestName, setGuestName] = useState('')
   const [playerCount, setPlayerCount] = useState(config.playerCount || 10)
-  const [roles, setRoles] = useState<Record<string, number>>(
-    config.roles && Object.keys(config.roles).length > 0
-      ? config.roles
-      : { wolf: 3, villager: 4, seer: 1, doctor: 1, witch: 1 }
-  )
 
-  const totalRoles = Object.values(roles).reduce((a, b) => a + b, 0)
+  // Enabled special roles (checked)
+  const [enabledRoles, setEnabledRoles] = useState<Set<string>>(() => {
+    const existing = config.roles && Object.keys(config.roles).length > 0 ? config.roles : null
+    if (existing) {
+      return new Set(Object.keys(existing).filter(r => (existing[r] || 0) > 0))
+    }
+    // Default enabled: wolf, villager, seer, doctor, witch
+    return new Set(['wolf', 'villager', 'seer', 'doctor', 'witch'])
+  })
+
+  const [roles, setRoles] = useState<Record<string, number>>(() => {
+    if (config.roles && Object.keys(config.roles).length > 0) return config.roles
+    return { wolf: 3, villager: 4, seer: 1, doctor: 1, witch: 1 }
+  })
+
+  const totalRoles = Object.entries(roles)
+    .filter(([r]) => enabledRoles.has(r))
+    .reduce((a, [, b]) => a + b, 0)
   const isValid = totalRoles === playerCount && (roles.wolf || 0) >= 1
   const canStart = isValid && players.length === playerCount
 
   const joinUrl = `${window.location.origin}/play/${roomCode}`
 
+  // Build effective config (only enabled roles)
+  const getEffectiveRoles = () => {
+    const effective: Record<string, number> = {}
+    for (const [r, count] of Object.entries(roles)) {
+      if (enabledRoles.has(r) && count > 0) {
+        effective[r] = count
+      }
+    }
+    return effective
+  }
+
   useEffect(() => {
     const conn = getConnection()
-    conn.invoke('ConfigureRoom', roomCode, playerCount, roles).catch(() => {})
-  }, [roomCode, playerCount, roles])
+    const effectiveRoles = getEffectiveRoles()
+    conn.invoke('ConfigureRoom', roomCode, playerCount, effectiveRoles).catch(() => {})
+  }, [roomCode, playerCount, roles, enabledRoles])
+
+  const toggleRole = (role: string) => {
+    setEnabledRoles(prev => {
+      const next = new Set(prev)
+      if (next.has(role)) {
+        next.delete(role)
+      } else {
+        next.add(role)
+        // Default to 1 when enabling
+        if (!roles[role] || roles[role] === 0) {
+          setRoles(prev => ({ ...prev, [role]: 1 }))
+        }
+      }
+      return next
+    })
+  }
 
   const updateRole = (role: string, delta: number) => {
     setRoles(prev => {
-      const newVal = Math.max(0, (prev[role] || 0) + delta)
+      const newVal = Math.max(role === 'wolf' ? 1 : 0, (prev[role] || 0) + delta)
       return { ...prev, [role]: newVal }
     })
   }
@@ -69,20 +110,62 @@ export default function Lobby() {
             </div>
           </div>
 
-          {ALL_ROLES.map(role => (
-            <div key={role} className="flex items-center justify-between">
-              <span className="text-gray-300">
-                <RoleIcon role={role} size={24} /> {ROLE_NAMES[role]}
-              </span>
-              <div className="flex items-center gap-2">
-                <button onClick={() => updateRole(role, -1)}
-                  className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg text-white cursor-pointer">-</button>
-                <span className="text-lg font-bold w-8 text-center">{roles[role] || 0}</span>
-                <button onClick={() => updateRole(role, 1)}
-                  className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg text-white cursor-pointer">+</button>
+          {/* Core roles (always enabled) */}
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Vai cơ bản</p>
+            {CORE_ROLES.map(role => (
+              <div key={role} className="flex items-center justify-between py-1">
+                <span className="text-gray-300 flex items-center gap-2">
+                  <RoleIcon role={role} size={22} /> {ROLE_NAMES[role]}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => updateRole(role, -1)}
+                    className="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded-lg text-white text-sm cursor-pointer">-</button>
+                  <span className="text-lg font-bold w-6 text-center">{roles[role] || 0}</span>
+                  <button onClick={() => updateRole(role, 1)}
+                    className="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded-lg text-white text-sm cursor-pointer">+</button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Special roles (toggle + count) */}
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Vai đặc biệt</p>
+            {SPECIAL_ROLES.map(role => {
+              const enabled = enabledRoles.has(role)
+              return (
+                <div key={role} className={`flex items-center justify-between py-1 transition-opacity ${!enabled ? 'opacity-50' : ''}`}>
+                  <label className="flex items-center gap-2 cursor-pointer select-none" title={ROLE_DESCRIPTIONS[role]}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => toggleRole(role)}
+                      className="w-4 h-4 rounded accent-violet-600 cursor-pointer"
+                    />
+                    <RoleIcon role={role} size={22} />
+                    <span className="text-gray-300">{ROLE_NAMES[role]}</span>
+                  </label>
+                  {enabled && (
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => updateRole(role, -1)}
+                        className="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded-lg text-white text-sm cursor-pointer">-</button>
+                      <span className="text-lg font-bold w-6 text-center">{roles[role] || 0}</span>
+                      <button onClick={() => updateRole(role, 1)}
+                        className="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded-lg text-white text-sm cursor-pointer">+</button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Role descriptions tooltip area */}
+          <div className="text-xs text-gray-600 space-y-0.5">
+            {SPECIAL_ROLES.filter(r => enabledRoles.has(r)).map(role => (
+              <p key={role}><RoleIcon role={role} size={14} /> {ROLE_DESCRIPTIONS[role]}</p>
+            ))}
+          </div>
 
           <div className={`text-sm text-center py-2 rounded-lg ${isValid ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
             Tổng vai: {totalRoles} / {playerCount}
@@ -95,6 +178,36 @@ export default function Lobby() {
           <h3 className="font-semibold text-lg">
             👥 Người chơi ({players.length}/{playerCount})
           </h3>
+
+          {/* Add guest player */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={guestName}
+              onChange={e => setGuestName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && guestName.trim()) {
+                  const conn = getConnection()
+                  conn.invoke('AddGuestPlayer', roomCode, guestName.trim())
+                  setGuestName('')
+                }
+              }}
+              placeholder="Thêm người chơi (không có ĐT)..."
+              className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-violet-500"
+            />
+            <button
+              onClick={() => {
+                if (!guestName.trim()) return
+                const conn = getConnection()
+                conn.invoke('AddGuestPlayer', roomCode, guestName.trim())
+                setGuestName('')
+              }}
+              disabled={!guestName.trim()}
+              className="px-3 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-sm rounded-lg cursor-pointer"
+            >
+              + Thêm
+            </button>
+          </div>
 
           {players.length === 0 ? (
             <p className="text-gray-500 text-center py-8">Chờ người chơi tham gia...</p>

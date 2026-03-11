@@ -67,23 +67,43 @@ public class RoomManager : IDisposable
 
     // ── Public API (same interface as before) ──
 
-    public GameRoom CreateRoom(string hostConnectionId)
+    public GameRoom CreateRoom(string hostConnectionId, bool isPublic = true)
     {
         string code;
-        do { code = _engine.GenerateRoomCode(); }
-        while (_rooms.ContainsKey(code));
+        if (isPublic)
+        {
+            // Short 4-char code for public rooms
+            do { code = _engine.GenerateRoomCode(); }
+            while (_rooms.ContainsKey(code));
+        }
+        else
+        {
+            // Long 8-char code for private rooms (harder to guess)
+            do { code = _engine.GeneratePrivateRoomCode(); }
+            while (_rooms.ContainsKey(code));
+        }
 
         var room = new GameRoom
         {
             Code = code,
             HostConnectionId = hostConnectionId,
             Phase = GamePhase.Lobby,
+            IsPublic = isPublic,
             LastActivity = DateTime.UtcNow
         };
 
         _rooms[code] = room;
         SaveToDb(room);
         return room;
+    }
+
+    public List<GameRoom> GetPublicRooms()
+    {
+        return _rooms.Values
+            .Where(r => r.IsPublic && r.Phase == GamePhase.Lobby)
+            .OrderByDescending(r => r.LastActivity)
+            .Take(20)
+            .ToList();
     }
 
     public GameRoom? GetRoom(string code) =>
@@ -202,6 +222,8 @@ public class RoomManager : IDisposable
         NightActionsJson = JsonSerializer.Serialize(r.NightActions),
         AnnouncementsJson = JsonSerializer.Serialize(r.PendingAnnouncements),
         VotesJson = JsonSerializer.Serialize(r.VoteSession),
+        ElderLivesJson = JsonSerializer.Serialize(r.ElderLives),
+        IsPublic = r.IsPublic,
         Winner = r.Winner,
         LastActivity = r.LastActivity,
     };
@@ -218,6 +240,8 @@ public class RoomManager : IDisposable
         NightActions = JsonSerializer.Deserialize<NightActions>(re.NightActionsJson) ?? new(),
         PendingAnnouncements = JsonSerializer.Deserialize<List<string>>(re.AnnouncementsJson) ?? [],
         VoteSession = JsonSerializer.Deserialize<VoteSession>(re.VotesJson) ?? new(),
+        ElderLives = JsonSerializer.Deserialize<Dictionary<string, int>>(re.ElderLivesJson) ?? new(),
+        IsPublic = re.IsPublic,
         Winner = re.Winner,
         LastActivity = re.LastActivity,
         Players = players.ToDictionary(p => p.Id, p => new Player

@@ -3,11 +3,14 @@ namespace MaSoiBackend.Models;
 public enum Role
 {
     Wolf,
+    AlphaWolf,
     Villager,
     Seer,
     Doctor,
     Witch,
-    Hunter
+    Hunter,
+    Guard,
+    Elder
 }
 
 public enum GamePhase
@@ -31,19 +34,25 @@ public class Player
 public class NightActions
 {
     public string? WolfVictim { get; set; }
+    public string? AlphaWolfConvert { get; set; } // Alpha wolf converts instead of killing
     public string? SeerTarget { get; set; }
     public string? SeerResult { get; set; }
     public string? DoctorSave { get; set; }
+    public string? GuardProtect { get; set; }
     public string? WitchHeal { get; set; }
     public string? WitchPoison { get; set; }
     public bool WitchHealUsed { get; set; }
     public bool WitchPoisonUsed { get; set; }
+    public bool AlphaWolfConvertUsed { get; set; } // One-time ability
+    public string? LastDoctorSave { get; set; }
+    public string? LastGuardProtect { get; set; } // Guard can't protect same person twice
 }
 
 public class VoteSession
 {
     public bool IsOpen { get; set; }
     public Dictionary<string, string> Votes { get; set; } = new();
+    public DateTime? Deadline { get; set; }
 }
 
 public class GameConfig
@@ -65,7 +74,10 @@ public class GameRoom
     public NightActions NightActions { get; set; } = new();
     public VoteSession VoteSession { get; set; } = new();
     public List<string> PendingAnnouncements { get; set; } = new();
+    public bool IsPublic { get; set; }
     public string? Winner { get; set; }
+    public string? HunterPendingShot { get; set; }
+    public Dictionary<string, int> ElderLives { get; set; } = new(); // Elder has 2 lives vs wolves
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
 }
 
@@ -82,5 +94,5 @@ public record GameStateDto(
     List<string> PendingAnnouncements,
     string? Winner
 );
-public record VoteSessionDto(bool IsOpen, Dictionary<string, int> Counts);
+public record VoteSessionDto(bool IsOpen, Dictionary<string, int> Counts, long? DeadlineMs);
 public record RevealDto(string Id, string Name, string Role, bool IsAlive);

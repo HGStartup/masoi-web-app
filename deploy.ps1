@@ -92,7 +92,7 @@ Write-Host "  Sending app_offline.htm to stop app..." -ForegroundColor Yellow
     "-source:contentPath=`"$offlineFile`"" `
     "-dest:contentPath=`"$destContent\app_offline.htm`",computerName=`"$DeployUrl`",authType=Basic,userName=`"$DeployUser`",password=`"$DeployPassword`"" `
     "-allowUntrusted"
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 10
 
 $msdeployArgs = @(
     "-verb:sync",

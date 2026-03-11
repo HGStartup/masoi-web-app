@@ -8,6 +8,7 @@ import NightPhase from '../components/host/NightPhase'
 import DayPhase from '../components/host/DayPhase'
 import VotePanel from '../components/host/VotePanel'
 import GameOver from '../components/shared/GameOver'
+import HunterShotModal from '../components/host/HunterShotModal'
 import Toast from '../components/shared/Toast'
 
 export default function HostPage() {
@@ -53,6 +54,7 @@ export default function HostPage() {
       <Header title="Quản trò" roomCode={roomCode} round={round} />
 
       <Toast message={error} onDismiss={() => useStore.setState({ error: null })} />
+      <HunterShotModal />
 
       {!isConnected && (
         <div className="mx-4 mt-4 p-3 bg-yellow-900/40 border border-yellow-800 rounded-xl text-yellow-300 text-center">

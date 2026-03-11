@@ -14,7 +14,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<RoomEntity>(e =>
         {
             e.HasKey(r => r.Code);
-            e.Property(r => r.Code).HasMaxLength(6);
+            e.Property(r => r.Code).HasMaxLength(10);
         });
 
         modelBuilder.Entity<PlayerEntity>(e =>
@@ -39,6 +39,8 @@ public class RoomEntity
     public string NightActionsJson { get; set; } = "{}";
     public string AnnouncementsJson { get; set; } = "[]";
     public string VotesJson { get; set; } = "{}";
+    public string ElderLivesJson { get; set; } = "{}";
+    public bool IsPublic { get; set; }
     public string? Winner { get; set; }
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
-import { ROLE_NAMES } from '../../types/game'
+import { ROLE_NAMES, isWolfTeam } from '../../types/game'
 import { useStore } from '../../lib/store'
 import RoleIcon from '../shared/RoleIcon'
 
@@ -14,9 +14,9 @@ export default function RoleCard() {
       if (timerRef.current) clearTimeout(timerRef.current)
       setRevealed(false)
     } else {
-      // Show → auto-hide after 3s
+      // Show → auto-hide after 700ms
       setRevealed(true)
-      timerRef.current = setTimeout(() => setRevealed(false), 3000)
+      timerRef.current = setTimeout(() => setRevealed(false), 700)
     }
   }, [revealed])
 
@@ -29,7 +29,7 @@ export default function RoleCard() {
     >
       <div className={`rounded-2xl border-2 p-6 text-center transition-all duration-300 ${
         revealed
-          ? myRole === 'wolf'
+          ? isWolfTeam(myRole)
             ? 'bg-red-900/30 border-red-600'
             : 'bg-violet-900/30 border-violet-600'
           : 'bg-gray-800 border-gray-600'
@@ -37,10 +37,10 @@ export default function RoleCard() {
         {revealed ? (
           <div className="space-y-2">
             <div><RoleIcon role={myRole} size={64} /></div>
-            <div className={`text-xl font-bold ${myRole === 'wolf' ? 'text-red-400' : 'text-violet-300'}`}>
+            <div className={`text-xl font-bold ${isWolfTeam(myRole) ? 'text-red-400' : 'text-violet-300'}`}>
               {ROLE_NAMES[myRole] || myRole}
             </div>
-            <p className="text-gray-400 text-xs">Tự ẩn sau 3 giây · Nhấn để ẩn ngay</p>
+            <p className="text-gray-400 text-xs">Tự ẩn sau 0.7 giây · Nhấn để ẩn ngay</p>
           </div>
         ) : (
           <div className="space-y-2">

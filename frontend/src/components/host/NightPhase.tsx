@@ -1,36 +1,47 @@
 import { useState } from 'react'
 import { getConnection } from '../../lib/signalr'
 import { useStore } from '../../lib/store'
-import { ROLE_NAMES } from '../../types/game'
+import { ROLE_NAMES, isWolfTeam } from '../../types/game'
 import RoleIcon from '../shared/RoleIcon'
 
 export default function NightPhase() {
-  const { roomCode, round, nightStep, players } = useStore()
+  const { roomCode, round, nightStep, nightStepExtra, players } = useStore()
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null)
+  const [witchAction, setWitchAction] = useState<'heal' | 'poison' | null>(null)
   const conn = getConnection()
 
   if (!nightStep) return <div className="p-6 text-center text-gray-400">Đang tải...</div>
 
   const currentRole = nightStep.role
+  const extra = nightStepExtra || {}
+
   const handleSubmitAndAdvance = () => {
     if (currentRole === 'witch') {
-      // For witch, handle specially
-      conn.invoke('SubmitNightAction', roomCode, currentRole, selectedTarget ? `heal:${selectedTarget}` : null)
+      if (witchAction === 'heal' && selectedTarget) {
+        conn.invoke('SubmitNightAction', roomCode, currentRole, `heal:${selectedTarget}`)
+      } else if (witchAction === 'poison' && selectedTarget) {
+        conn.invoke('SubmitNightAction', roomCode, currentRole, `poison:${selectedTarget}`)
+      } else {
+        conn.invoke('SubmitNightAction', roomCode, currentRole, null)
+      }
     } else {
       conn.invoke('SubmitNightAction', roomCode, currentRole, selectedTarget)
     }
     setSelectedTarget(null)
+    setWitchAction(null)
     conn.invoke('AdvanceNight', roomCode)
   }
 
   const handleSkip = () => {
     conn.invoke('SubmitNightAction', roomCode, currentRole, null)
     setSelectedTarget(null)
+    setWitchAction(null)
     conn.invoke('AdvanceNight', roomCode)
   }
 
   const handleGoBack = () => {
     setSelectedTarget(null)
+    setWitchAction(null)
     conn.invoke('GoBackNight', roomCode)
   }
 
@@ -38,12 +49,59 @@ export default function NightPhase() {
     conn.invoke('EndNight', roomCode)
   }
 
-  // Get role-specific players (e.g., which players are wolves)
+  // Get role-specific players
   const getRolePlayers = (role: string) => {
     return players.filter(p => p.role === role && p.isAlive).map(p => p.name)
   }
 
   const rolePlayerNames = getRolePlayers(currentRole)
+
+  // Filter targets based on role constraints
+  const getFilteredTargets = () => {
+    let targets = nightStep.alivePlayers
+
+    if (currentRole === 'wolf') {
+      const wolfIds: string[] = extra.wolfPlayerIds || []
+      targets = targets.filter(p => !wolfIds.includes(p.id))
+    }
+
+    if (currentRole === 'alphawolf') {
+      const wolfIds: string[] = extra.wolfPlayerIds || []
+      targets = targets.filter(p => !wolfIds.includes(p.id))
+    }
+
+    if (currentRole === 'guard') {
+      const lastGuard = extra.lastGuardProtect
+      if (lastGuard) {
+        targets = targets.map(p => ({
+          ...p,
+          _disabled: p.id === lastGuard
+        }))
+      }
+    }
+
+    if (currentRole === 'doctor') {
+      const lastSave = extra.lastDoctorSave
+      if (lastSave) {
+        targets = targets.map(p => ({
+          ...p,
+          _disabled: p.id === lastSave
+        }))
+      }
+    }
+
+    return targets
+  }
+
+  const filteredTargets = getFilteredTargets()
+  const healUsed = extra.healUsed ?? false
+  const poisonUsed = extra.poisonUsed ?? false
+  const convertUsed = extra.convertUsed ?? false
+
+  // Can skip: witch, hunter, alphawolf
+  const canSkip = currentRole === 'witch' || currentRole === 'hunter' || currentRole === 'alphawolf'
+  // Must select: wolf, seer, doctor, guard
+  const mustSelect = currentRole === 'wolf' || currentRole === 'seer' || currentRole === 'doctor' || currentRole === 'guard'
 
   return (
     <div className="p-4 space-y-4 max-w-4xl mx-auto">
@@ -65,7 +123,6 @@ export default function NightPhase() {
         <div className="w-48 shrink-0 space-y-1">
           <p className="text-gray-400 text-sm mb-2">Thứ tự thức dậy</p>
           {Array.from({ length: nightStep.totalSteps }).map((_, i) => {
-            // We need to figure out the role for each step
             const isActive = i === nightStep.stepIndex
             const isDone = i < nightStep.stepIndex
             return (
@@ -97,55 +154,138 @@ export default function NightPhase() {
               {currentRole === 'wolf' && (
                 <p className="text-gray-400 text-sm mt-1">
                   Sói ({rolePlayerNames.join(', ')}) chọn nạn nhân:
+                  <span className="text-red-400 ml-1">(không thể chọn sói)</span>
                 </p>
+              )}
+              {currentRole === 'alphawolf' && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-gray-400 text-sm">
+                    Sói Đầu Đàn ({getRolePlayers('alphawolf').join(', ')}) chọn người để biến thành sói:
+                  </p>
+                  {convertUsed ? (
+                    <p className="text-amber-400 text-xs">Đã dùng năng lực biến hình. Có thể bỏ qua.</p>
+                  ) : (
+                    <p className="text-green-400 text-xs">Chọn 1 người để biến thành sói (thay vì giết). Dùng 1 lần duy nhất!</p>
+                  )}
+                </div>
               )}
               {currentRole === 'seer' && (
                 <p className="text-gray-400 text-sm mt-1">
                   Tiên tri ({rolePlayerNames.join(', ')}) chọn người để soi:
                 </p>
               )}
+              {currentRole === 'guard' && (
+                <p className="text-gray-400 text-sm mt-1">
+                  Bảo vệ ({rolePlayerNames.join(', ')}) chọn người bảo vệ:
+                  {extra.lastGuardProtect && (
+                    <span className="text-amber-400 ml-1">
+                      (không thể bảo vệ cùng người đêm trước)
+                    </span>
+                  )}
+                </p>
+              )}
               {currentRole === 'doctor' && (
                 <p className="text-gray-400 text-sm mt-1">
                   Thầy thuốc ({rolePlayerNames.join(', ')}) chọn người cứu:
+                  {extra.lastDoctorSave && (
+                    <span className="text-amber-400 ml-1">
+                      (không thể cứu cùng người đêm trước)
+                    </span>
+                  )}
                 </p>
               )}
-              {currentRole !== 'wolf' && currentRole !== 'seer' && currentRole !== 'doctor' && (
+              {currentRole === 'witch' && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-gray-400 text-sm">{nightStep.instruction}</p>
+                  <p className="text-gray-500 text-xs">Phù thủy không biết ai bị sói cắn. Chọn người để cứu hoặc giết.</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setWitchAction('heal'); setSelectedTarget(null) }}
+                      disabled={healUsed}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                        witchAction === 'heal'
+                          ? 'bg-green-600 text-white'
+                          : healUsed
+                          ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                          : 'bg-gray-700 text-green-400 hover:bg-gray-600'
+                      }`}
+                    >
+                      💊 Cứu {healUsed ? '(đã dùng)' : ''}
+                    </button>
+                    <button
+                      onClick={() => { setWitchAction('poison'); setSelectedTarget(null) }}
+                      disabled={poisonUsed}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                        witchAction === 'poison'
+                          ? 'bg-purple-600 text-white'
+                          : poisonUsed
+                          ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                          : 'bg-gray-700 text-purple-400 hover:bg-gray-600'
+                      }`}
+                    >
+                      ☠️ Giết {poisonUsed ? '(đã dùng)' : ''}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {currentRole === 'hunter' && (
+                <p className="text-gray-400 text-sm mt-1">
+                  Thợ săn không cần hành động ban đêm (bắn khi chết)
+                </p>
+              )}
+              {/* Generic fallback for unknown roles */}
+              {!['wolf', 'alphawolf', 'seer', 'guard', 'doctor', 'witch', 'hunter'].includes(currentRole) && (
                 <p className="text-gray-400 text-sm mt-1">{nightStep.instruction}</p>
+              )}
+              {mustSelect && (
+                <p className="text-amber-400 text-xs mt-1">⚠️ Bắt buộc phải chọn</p>
               )}
             </div>
 
-            {/* Player Selection */}
-            <div className="space-y-1">
-              {nightStep.alivePlayers.map(p => {
-                const isSelected = selectedTarget === p.id
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedTarget(isSelected ? null : p.id)}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-violet-600/40 border-2 border-violet-500'
-                        : 'bg-gray-900/50 border border-gray-700 hover:border-gray-600'
-                    }`}
-                  >
-                    <span className="text-white font-medium">{p.name}</span>
-                    <span className="text-sm">
-                      {p.role && (
-                        <span className={p.role === 'wolf' ? 'text-red-400' : 'text-gray-400'}>
-                          <RoleIcon role={p.role || 'villager'} size={20} />
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+            {/* Player Selection — hide for hunter (no night action) and alphawolf if already used */}
+            {currentRole !== 'hunter' && !(currentRole === 'alphawolf' && convertUsed) && (
+              <div className="space-y-1">
+                {(currentRole === 'witch' && witchAction
+                  ? nightStep.alivePlayers
+                  : filteredTargets
+                ).map(p => {
+                  const isSelected = selectedTarget === p.id
+                  const isDisabled = (p as any)._disabled
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => !isDisabled && setSelectedTarget(isSelected ? null : p.id)}
+                      disabled={isDisabled}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'bg-violet-600/40 border-2 border-violet-500'
+                          : isDisabled
+                          ? 'bg-gray-900/30 border border-gray-800 opacity-40 cursor-not-allowed'
+                          : 'bg-gray-900/50 border border-gray-700 hover:border-gray-600'
+                      }`}
+                    >
+                      <span className="text-white font-medium">
+                        {p.name}
+                        {isDisabled && <span className="text-amber-400 text-xs ml-2">(đêm trước)</span>}
+                      </span>
+                      <span className="text-sm">
+                        {p.role && (
+                          <span className={isWolfTeam(p.role) ? 'text-red-400' : 'text-gray-400'}>
+                            <RoleIcon role={p.role || 'villager'} size={20} />
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
 
             {/* Seer result */}
             {currentRole === 'seer' && selectedTarget && (() => {
               const target = players.find(p => p.id === selectedTarget)
               if (target) {
-                const isWolf = target.role === 'wolf'
+                const isWolf = isWolfTeam(target.role)
                 return (
                   <div className={`p-3 rounded-lg text-center font-semibold ${
                     isWolf ? 'bg-red-900/40 text-red-400 border border-red-800' : 'bg-green-900/40 text-green-400 border border-green-800'
@@ -167,15 +307,18 @@ export default function NightPhase() {
             >
               ← Bước trước
             </button>
-            <button
-              onClick={handleSkip}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl transition-colors cursor-pointer"
-            >
-              Bỏ qua
-            </button>
+            {canSkip && (
+              <button
+                onClick={handleSkip}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl transition-colors cursor-pointer"
+              >
+                Bỏ qua
+              </button>
+            )}
             <button
               onClick={handleSubmitAndAdvance}
-              className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-xl transition-colors cursor-pointer"
+              disabled={mustSelect && !selectedTarget}
+              className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors cursor-pointer"
             >
               Bước tiếp →
             </button>
@@ -203,7 +346,7 @@ export default function NightPhase() {
                 <td className="px-4 py-2 text-gray-500">{i + 1}</td>
                 <td className="px-4 py-2 font-semibold">{p.name}</td>
                 <td className="px-4 py-2">
-                  <span className={p.role === 'wolf' ? 'text-red-400' : p.role === 'seer' ? 'text-purple-400' : p.role === 'doctor' ? 'text-amber-400' : p.role === 'witch' ? 'text-green-400' : p.role === 'hunter' ? 'text-orange-400' : 'text-gray-300'}>
+                  <span className={isWolfTeam(p.role) ? 'text-red-400' : p.role === 'seer' ? 'text-purple-400' : p.role === 'doctor' ? 'text-amber-400' : p.role === 'witch' ? 'text-green-400' : p.role === 'hunter' ? 'text-orange-400' : p.role === 'guard' ? 'text-blue-400' : p.role === 'elder' ? 'text-yellow-600' : 'text-gray-300'}>
                     <RoleIcon role={p.role || 'villager'} size={20} /> {ROLE_NAMES[p.role || 'villager']}
                   </span>
                 </td>

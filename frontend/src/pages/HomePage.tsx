@@ -1,18 +1,40 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { startConnection } from '../lib/signalr'
 import { useStore, subscribeToEvents } from '../lib/store'
 import { useAuthStore, startZaloLogin } from '../lib/auth'
 import Toast from '../components/shared/Toast'
 
+interface PublicRoom {
+  code: string
+  playerCount: number
+  maxPlayers: number | null
+}
+
 export default function HomePage() {
   const navigate = useNavigate()
   const [joinCode, setJoinCode] = useState('')
   const [showJoin, setShowJoin] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [isPublic, setIsPublic] = useState(true)
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [publicRooms, setPublicRooms] = useState<PublicRoom[]>([])
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+
+  // Fetch public rooms
+  useEffect(() => {
+    if (!user) return
+    const fetchRooms = () => {
+      fetch('/api/rooms/public')
+        .then(r => r.json())
+        .then(setPublicRooms)
+        .catch(() => {})
+    }
+    fetchRooms()
+    const interval = setInterval(fetchRooms, 5000)
+    return () => clearInterval(interval)
+  }, [user])
 
   const handleLogin = async () => {
     setLoginError(null)
@@ -34,7 +56,7 @@ export default function HomePage() {
         navigate(`/host/${roomCode}`)
       })
 
-      await conn.invoke('CreateRoom')
+      await conn.invoke('CreateRoom', isPublic)
     } catch {
       useStore.setState({ error: 'Không thể kết nối server' })
       setLoading(false)
@@ -43,8 +65,12 @@ export default function HomePage() {
 
   const handleJoin = () => {
     if (joinCode.trim().length >= 4) {
-      navigate(`/play/${joinCode.trim().toUpperCase()}`)
+      navigate(`/play/${joinCode.trim()}`)
     }
+  }
+
+  const handleJoinRoom = (code: string) => {
+    navigate(`/play/${code}`)
   }
 
   // Not logged in → show login screen
@@ -80,9 +106,9 @@ export default function HomePage() {
 
   // Logged in → show main menu
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] p-4">
-      <div className="w-full max-w-md space-y-8 text-center">
-        <div className="space-y-2">
+    <div className="min-h-screen bg-[#0a0a0f] p-4">
+      <div className="w-full max-w-md mx-auto space-y-6 pt-8">
+        <div className="space-y-2 text-center">
           <h1 className="text-5xl font-bold flex items-center justify-center gap-3">
             <img src="/icons/wolf.png" alt="Ma Sói" className="w-14 h-14 rounded-full" /> Ma Sói
           </h1>
@@ -108,29 +134,57 @@ export default function HomePage() {
         </div>
 
         <div className="space-y-4">
-          <button
-            onClick={handleCreate}
-            disabled={loading}
-            className="w-full py-4 px-6 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-lg font-semibold rounded-xl transition-colors cursor-pointer"
-          >
-            {loading ? 'Đang tạo...' : '🏠 Tạo phòng mới'}
-          </button>
+          {/* Create room with public/private toggle */}
+          <div className="space-y-3">
+            <button
+              onClick={handleCreate}
+              disabled={loading}
+              className="w-full py-4 px-6 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-lg font-semibold rounded-xl transition-colors cursor-pointer"
+            >
+              {loading ? 'Đang tạo...' : '🏠 Tạo phòng mới'}
+            </button>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={() => setIsPublic(true)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isPublic
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                🌐 Public
+              </button>
+              <button
+                onClick={() => setIsPublic(false)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  !isPublic
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                🔒 Private
+              </button>
+              <span className="text-gray-500 text-xs">
+                {isPublic ? 'Hiện trong danh sách' : 'Chỉ quét QR/nhập mã'}
+              </span>
+            </div>
+          </div>
 
           {!showJoin ? (
             <button
               onClick={() => setShowJoin(true)}
               className="w-full py-4 px-6 bg-gray-800 hover:bg-gray-700 text-white text-lg font-semibold rounded-xl transition-colors border border-gray-700 cursor-pointer"
             >
-              🚪 Tham gia phòng
+              🚪 Nhập mã phòng
             </button>
           ) : (
             <div className="space-y-3">
               <input
                 type="text"
                 value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                onChange={(e) => setJoinCode(e.target.value)}
                 placeholder="Nhập mã phòng..."
-                maxLength={6}
+                maxLength={8}
                 className="w-full py-3 px-4 bg-gray-800 border border-gray-600 rounded-xl text-white text-center text-2xl tracking-widest focus:outline-none focus:border-violet-500"
                 autoFocus
                 onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
@@ -153,6 +207,32 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
+        {/* Public rooms list */}
+        {publicRooms.length > 0 && (
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold text-gray-300">🌐 Phòng công khai</h2>
+            <div className="space-y-2">
+              {publicRooms.map(room => (
+                <button
+                  key={room.code}
+                  onClick={() => handleJoinRoom(room.code)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-800/50 border border-gray-700 hover:border-violet-500 rounded-xl transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl font-mono font-bold text-white tracking-wider">{room.code}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">
+                      👥 {room.playerCount}{room.maxPlayers ? `/${room.maxPlayers}` : ''}
+                    </span>
+                    <span className="text-violet-400 text-sm font-medium">Vào →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

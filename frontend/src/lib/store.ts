@@ -21,11 +21,14 @@ interface Store {
   round: number
   config: { playerCount: number; roles: Record<string, number> }
   nightStep: NightStepInfo | null
+  nightStepExtra: Record<string, any> | null
   announcements: string[]
   voteCounts: Record<string, number>
   voteOpen: boolean
+  voteTimer: number | null // seconds remaining
   winner: string | null
   reveals: RevealInfo[]
+  hunterShot: Player | null // hunter who needs to shoot
 
   // Actions
   setConnected: (v: boolean) => void
@@ -48,11 +51,14 @@ const initialState = {
   round: 0,
   config: { playerCount: 0, roles: {} },
   nightStep: null,
+  nightStepExtra: null,
   announcements: [],
   voteCounts: {},
   voteOpen: false,
+  voteTimer: null,
   winner: null,
   reveals: [],
+  hunterShot: null,
 }
 
 export const useStore = create<Store>((set) => ({
@@ -64,6 +70,29 @@ export const useStore = create<Store>((set) => ({
   setMyPlayerId: (v) => set({ myPlayerId: v }),
   reset: () => set(initialState),
 }))
+
+let voteCountdownInterval: ReturnType<typeof setInterval> | null = null
+
+function startVoteCountdown(seconds: number) {
+  stopVoteCountdown()
+  useStore.setState({ voteTimer: seconds })
+  voteCountdownInterval = setInterval(() => {
+    const current = useStore.getState().voteTimer
+    if (current != null && current > 0) {
+      useStore.setState({ voteTimer: current - 1 })
+    } else {
+      stopVoteCountdown()
+    }
+  }, 1000)
+}
+
+function stopVoteCountdown() {
+  if (voteCountdownInterval) {
+    clearInterval(voteCountdownInterval)
+    voteCountdownInterval = null
+  }
+  useStore.setState({ voteTimer: null })
+}
 
 export function subscribeToEvents() {
   const conn = getConnection()
@@ -108,31 +137,51 @@ export function subscribeToEvents() {
     useStore.setState({ myRole: role })
   })
 
-  conn.on('NightStep', (step: NightStepInfo) => {
-    useStore.setState({ nightStep: step })
+  conn.on('NightStep', (step: NightStepInfo, extraInfo?: Record<string, any>) => {
+    useStore.setState({ nightStep: step, nightStepExtra: extraInfo ?? null })
   })
 
   conn.on('DayAnnouncements', (announcements: string[]) => {
     useStore.setState({ announcements })
   })
 
-  conn.on('VoteOpened', () => {
+  conn.on('VoteOpened', (_candidates: any, seconds: number) => {
     useStore.setState({ voteOpen: true, voteCounts: {} })
+    startVoteCountdown(seconds)
   })
 
   conn.on('VoteUpdated', (counts: Record<string, number>) => {
     useStore.setState({ voteCounts: counts })
   })
 
+  conn.on('VoteClosed', () => {
+    stopVoteCountdown()
+  })
+
   conn.on('VoteExecuted', () => {
-    useStore.setState({ voteOpen: false, voteCounts: {} })
+    stopVoteCountdown()
+    useStore.setState({ voteOpen: false, voteCounts: {}, hunterShot: null })
+  })
+
+  conn.on('HunterShot', (hunter: Player) => {
+    useStore.setState({ hunterShot: hunter })
   })
 
   conn.on('GameEnded', (winner: string, reveals: RevealInfo[]) => {
+    stopVoteCountdown()
     useStore.setState({ winner, reveals, phase: 'ended' })
   })
 
   conn.on('Error', (message: string) => {
+    // Room/player not found → redirect to home
+    if (message === 'Phòng không tồn tại.' || message === 'Người chơi không tồn tại trong phòng.') {
+      useStore.setState({ error: message })
+      setTimeout(() => {
+        useStore.getState().reset()
+        window.location.href = '/'
+      }, 1500)
+      return
+    }
     useStore.setState({ error: message })
     setTimeout(() => useStore.setState({ error: null }), 4000)
   })
